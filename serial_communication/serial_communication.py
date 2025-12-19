@@ -6,6 +6,8 @@ import sys
 import platform
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
+import os
+import datetime
 
 class RS485Terminal:
     def __init__(self, gui_callback=None):
@@ -15,6 +17,73 @@ class RS485Terminal:
         self.echo = True  # 是否回显发送的数据
         self.hex_mode = True  # 默认使用十六进制模式
         self.gui_callback = gui_callback  # 用于更新GUI的回调函数
+        self.log_enabled = True  # 是否启用日志记录
+        self.log_file = None  # 日志文件对象
+        self.log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log")
+        self.init_log()
+    
+    def init_log(self):
+        """初始化日志记录"""
+        try:
+            # 确保log目录存在
+            if not os.path.exists(self.log_dir):
+                os.makedirs(self.log_dir)
+            
+            # 创建以日期命名的日志文件
+            today = datetime.datetime.now().strftime("%Y%m%d")
+            log_filename = os.path.join(self.log_dir, f"{today}_rs485_received.log")
+            
+            # 如果日志文件已打开，先关闭
+            if self.log_file:
+                self.log_file.close()
+            
+            # 打开新的日志文件（追加模式，UTF-8编码）
+            self.log_file = open(log_filename, 'a', encoding='utf-8')
+            
+            # 写入日志开始标记
+            start_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.log_file.write(f"\n\n===== RS485通信日志开始 [{start_time}] =====\n")
+            self.log_file.flush()
+            
+            return True
+        except Exception as e:
+            print(f"初始化日志失败: {str(e)}")
+            self.log_enabled = False
+            return False
+    
+    def log_data(self, data_type, data, timestamp=None):
+        """记录数据到日志文件
+        data_type: 'RX' (接收) 或 'TX' (发送)
+        data: 原始数据或十六进制字符串
+        timestamp: 可选的时间戳，如果不提供则使用当前时间
+        """
+        if not self.log_enabled or not self.log_file:
+            return False
+        
+        try:
+            if timestamp is None:
+                timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]  # 精确到毫秒
+            
+            # 记录数据
+            if isinstance(data, bytes):
+                hex_str = ' '.join(f'{b:02X}' for b in data)
+                log_entry = f"| {timestamp} | {data_type} | {len(data)} bytes |  {hex_str} |\n"
+            else:
+                log_entry = f" | {timestamp} | {data_type} | {data} |\n"
+            
+            self.log_file.write(log_entry)
+            self.log_file.flush()
+            return True
+        except Exception as e:
+            print(f"写入日志失败: {str(e)}")
+            return False
+    
+    def toggle_log(self):
+        """切换日志记录状态"""
+        self.log_enabled = not self.log_enabled
+        if self.log_enabled and not self.log_file:
+            self.init_log()
+        return self.log_enabled
         
     def list_ports(self):
         """列出所有可用的串口 - 跨平台支持"""
@@ -74,6 +143,9 @@ class RS485Terminal:
                     
                     timestamp = time.strftime("%H:%M:%S")
                     
+                    # 记录接收的数据到日志
+                    self.log_data('RX', data)
+                    
                     if self.hex_mode:
                         # 以十六进制显示
                         hex_str = ' '.join(f'{b:02X}' for b in data)
@@ -92,6 +164,8 @@ class RS485Terminal:
                         self.gui_callback(display_text, is_received=True)
             except Exception as e:
                 error_msg = f"[{time.strftime('%H:%M:%S')}] 接收错误: {str(e)}\n"
+                # 记录错误到日志
+                self.log_data('ERROR', str(e))
                 if self.gui_callback:
                     self.gui_callback(error_msg, is_error=True)
                 break
@@ -113,9 +187,14 @@ class RS485Terminal:
                 # 处理字符串数据
                 send_bytes = data.encode('utf-8')
             
+            # 记录发送的数据到日志
+            self.log_data('TX', send_bytes)
+            
             self.ser.write(send_bytes)
             return True
         except Exception as e:
+            # 记录发送错误到日志
+            self.log_data('ERROR', f"发送错误: {str(e)}")
             return False, f"发送错误: {str(e)}"
     
     def close(self):
@@ -125,8 +204,20 @@ class RS485Terminal:
             self.receive_thread.join(timeout=1.0)
         if self.ser and self.ser.is_open:
             self.ser.close()
-            return True, "已关闭串口连接"
-        return False, "没有打开的串口连接"
+            
+        # 关闭日志文件
+        if self.log_file:
+            try:
+                # 写入日志结束标记
+                end_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self.log_file.write(f"===== RS485通信日志结束 [{end_time}] =====\n\n")
+                self.log_file.flush()
+                self.log_file.close()
+                self.log_file = None
+            except:
+                pass
+                
+        return True, "已关闭串口连接"
     
     def toggle_hex_mode(self):
         """切换十六进制模式"""
@@ -324,6 +415,13 @@ class RS485GUITerminal(tk.Tk):
                                         command=self.toggle_echo)
         self.echo_check.pack(side=tk.LEFT, padx=10)
         
+        # 日志记录复选框
+        self.log_var = tk.BooleanVar(value=True)
+        self.log_check = ttk.Checkbutton(control_frame, text="记录日志", 
+                                        variable=self.log_var, 
+                                        command=self.toggle_log)
+        self.log_check.pack(side=tk.LEFT, padx=10)
+        
         # 清除显示按钮
         self.clear_btn = ttk.Button(control_frame, text="清除显示", command=self.clear_display)
         self.clear_btn.pack(side=tk.RIGHT, padx=10)
@@ -450,6 +548,13 @@ class RS485GUITerminal(tk.Tk):
         self.echo_var.set(new_mode)
         mode_text = "开启" if new_mode else "关闭"
         self.update_status(f"回显模式已{mode_text}", "info")
+    
+    def toggle_log(self):
+        """切换日志记录模式"""
+        new_mode = self.terminal.toggle_log()
+        self.log_var.set(new_mode)
+        mode_text = "开启" if new_mode else "关闭"
+        self.update_status(f"日志记录已{mode_text}", "info")
     
     def update_display(self, text, is_received=False, is_error=False):
         """更新数据显示区域内容（仅显示收发数据）"""

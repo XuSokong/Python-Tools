@@ -44,7 +44,8 @@ def imagetopdf(dir_name, outpdf):
     
     # 转换所有图片为RGB模式并优化
     images = []
-    for img_path in image_files:
+    for i, img_path in enumerate(image_files, 1):
+        print(f"  处理图片 {i}/{len(image_files)}: {img_path.name}")
         img = Image.open(img_path)
         if img.mode in ('RGBA', 'LA', 'P'):
             img = img.convert('RGB')
@@ -70,9 +71,28 @@ if __name__ == '__main__':
     dirs = readdirs()
     print(f"共找到 {len(dirs)} 个目录")
     
+    success_count = 0
+    fail_count = 0
+    failed_dirs = []
+    
     for dir_name in dirs:
         try:
+            print(f"\n处理目录: {dir_name}")
             imagetopdf(dir_name, dir_name)
             print(f"✓ 完成: {dir_name}")
+            success_count += 1
         except Exception as e:
             print(f"✗ 错误 ({dir_name}): {e}")
+            fail_count += 1
+            failed_dirs.append(dir_name)
+    
+    # 打印最终统计信息
+    print(f"\n{'='*50}")
+    print("处理完成统计:")
+    print(f"总目录数: {len(dirs)}")
+    print(f"成功目录数: {success_count}")
+    print(f"失败目录数: {fail_count}")
+    
+    if failed_dirs:
+        print(f"失败的目录: {', '.join(failed_dirs)}")
+    print(f"{'='*50}")
